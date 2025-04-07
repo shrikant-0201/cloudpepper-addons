@@ -1,0 +1,106 @@
+# -*- coding: utf-8 -*-
+from odoo import models, fields, api, _
+from odoo.exceptions import UserError, ValidationError
+
+class PurchaseOrder(models.Model):
+    _inherit = 'purchase.order'
+
+    # =======================================================================
+    # IMPORTANT - READ THIS!
+    # =======================================================================
+    # This code assumes the deposit creation is triggered by a method
+    # on the 'purchase.order' model. You MUST find the correct method name
+    # in your 'purchase_deposit' module's code and replace
+    # 'YOUR_DEPOSIT_CREATION_METHOD_NAME_HERE' below with the real name.
+    #
+    # Common patterns might involve methods named like:
+    # action_create_deposit, button_create_deposit, create_deposit_payment, etc.
+    #
+    # You also need to verify how the account.move lines are prepared.
+    # This code assumes the method prepares a dictionary 'move_vals' before
+    # creating the 'account.move'. The structure of 'move_vals' might differ.
+    # =======================================================================
+
+    def create_invoices(self):
+        # --- Find where the original method prepares the move values ---
+        # This step HIGHLY depends on the original method's structure.
+        # Option A: The method calls another helper method to get vals
+        # move_vals = self._prepare_deposit_move_vals() # Hypothetical example
+
+        # Option B: The method builds vals directly (less common for complex moves)
+        # move_vals = {...} # Values built here
+
+        # Option C: The original method does everything including create,
+        # so we call super() first, get the result (maybe an action or move),
+        # and *then* try to modify the created move *if possible before validation*.
+        # This is less ideal as validation might happen during super().
+
+        # --- Let's proceed assuming Option A or B where we intercept move_vals ---
+        # --- Replace this placeholder logic with actual call if needed ---
+        # --- You MUST adapt this part based on purchase_deposit's code ---
+
+        # Example: Assuming 'super()' call gives us the move values or we prepare them
+        # We need to get the dictionary 'move_vals' before the move is created.
+        # The line below is a placeholder - you need to figure out how the
+        # original method provides the move values dictionary.
+        # Perhaps it calls a specific preparation method?
+
+        # ---- START MODIFICATION LOGIC ----
+
+        # Let's assume we have access to `move_vals` somehow
+        # If the original method does more than just return vals, call super first.
+        # res = super(PurchaseOrder, self).create_invoices()
+        # Now, try to extract move_vals from 'res' if it's an action dictionary
+        # or find the created move if 'res' is a move object (less likely to work pre-validation)
+
+        # --- Simplified approach: Assume we override a PREPARATION method ---
+        # --- Let's pretend we override `_prepare_deposit_move_vals` ---
+        # --- You'd need to rename this method override accordingly! ---
+
+        # Replace this with the actual preparation method name if you find one
+        def _prepare_deposit_move_vals_placeholder(self):
+            # Get the original values first
+            move_vals = super(PurchaseOrder, self)._prepare_deposit_move_vals_placeholder() # Call original prep method
+
+            purchase_order = self # Assuming this method is on purchase.order
+
+            if not purchase_order.order_line:
+                # No lines to get analytic from, proceed as normal
+                return move_vals
+
+            # Get analytic distribution from the first PO line (simplification)
+            first_line = purchase_order.order_line[0]
+            analytic_distribution = first_line.analytic_distribution
+
+            if analytic_distribution and move_vals.get('line_ids'):
+                # Now, find the specific line(s) in the move dictionary to apply it to.
+                # This requires knowing which account the deposit uses.
+                # Let's assume it's the line labeled 'Deposit Payment' as per your error
+                # We need to loop through the line commands (usually tuples)
+                for command in move_vals['line_ids']:
+                    # command is often (0, 0, {line_dictionary}) for new lines
+                    if len(command) == 3 and command[0] == 0:
+                        line_dictionary = command[2]
+                        # Identify the target line. Check account? Check label?
+                        # Checking label is fragile, checking account is better.
+                        # You need to find the Account ID for your deposit/prepayment account.
+                        # Let's ASSUME the problematic line has the label 'Deposit Payment'
+                        if line_dictionary.get('name') == 'Deposit Payment': # Fragile Check!
+                            line_dictionary['analytic_distribution'] = analytic_distribution
+                            # If you found the line, maybe stop? Or apply to others?
+                            # Usually, it's one specific line (e.g., the prepayment debit)
+                            break # Exit loop after finding and modifying
+
+                        # --- Add a more robust check here if you know the deposit account ID ---
+                        # deposit_account_id = 12345 # Replace with your actual deposit account ID
+                        # if line_dictionary.get('account_id') == deposit_account_id:
+                        #     line_dictionary['analytic_distribution'] = analytic_distribution
+                        #     break
+                        # ---
+
+            return move_vals # Return the modified dictionary
+
+        # --- END MODIFICATION LOGIC ---
+
+        # If you overrode the main action method, you might return 'res' here
+        # return res
