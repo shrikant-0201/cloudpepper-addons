@@ -18,7 +18,6 @@
     'license': 'LGPL-3', # Or AGPL-3 if purchase_deposit is AGPL-3
     'depends': [
         'purchase_deposit', # MAKE SURE this is the exact technical name of your OCA module
-        'account_analytic', # Needed for analytic fields
     ],
     'data': [],
     'installable': True,
