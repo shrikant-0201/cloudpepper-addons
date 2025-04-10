@@ -1,106 +1,69 @@
 # -*- coding: utf-8 -*-
 from odoo import models, fields, api, _
-from odoo.exceptions import UserError, ValidationError
+from odoo.exceptions import UserError
+
+import logging # Optional: for logging messages during testing
+_logger = logging.getLogger(__name__) # Optional
 
 class PurchaseOrder(models.Model):
     _inherit = 'purchase.order'
 
-    # =======================================================================
-    # IMPORTANT - READ THIS!
-    # =======================================================================
-    # This code assumes the deposit creation is triggered by a method
-    # on the 'purchase.order' model. You MUST find the correct method name
-    # in your 'purchase_deposit' module's code and replace
-    # 'YOUR_DEPOSIT_CREATION_METHOD_NAME_HERE' below with the real name.
-    #
-    # Common patterns might involve methods named like:
-    # action_create_deposit, button_create_deposit, create_deposit_payment, etc.
-    #
-    # You also need to verify how the account.move lines are prepared.
-    # This code assumes the method prepares a dictionary 'move_vals' before
-    # creating the 'account.move'. The structure of 'move_vals' might differ.
-    # =======================================================================
+    def _prepare_deposit_move_line_vals(self, amount, taxes_vals):
+        """
+        Override to add analytic distribution from the first PO line
+        to the deposit account move line.
+        """
+        # First, call the original method to get the list of line dictionaries
+        lines_vals_list = super(PurchaseOrder, self)._prepare_deposit_move_line_vals(amount, taxes_vals)
 
-    def create_invoices(self):
-        # --- Find where the original method prepares the move values ---
-        # This step HIGHLY depends on the original method's structure.
-        # Option A: The method calls another helper method to get vals
-        # move_vals = self._prepare_deposit_move_vals() # Hypothetical example
+        # Ensure there are PO lines to get analytic info from
+        if not self.order_line:
+            _logger.warning(f"Purchase Order {self.name}: No order lines found to fetch analytic distribution.")
+            return lines_vals_list # Return original lines if no PO lines exist
 
-        # Option B: The method builds vals directly (less common for complex moves)
-        # move_vals = {...} # Values built here
+        # Get analytic distribution from the first PO line (simplification)
+        # Odoo 17 uses analytic_distribution (JSONB field - dictionary format)
+        first_line = self.order_line[0]
+        analytic_distribution = first_line.analytic_distribution
 
-        # Option C: The original method does everything including create,
-        # so we call super() first, get the result (maybe an action or move),
-        # and *then* try to modify the created move *if possible before validation*.
-        # This is less ideal as validation might happen during super().
+        _logger.info(f"Purchase Order {self.name}: First line analytic distribution: {analytic_distribution}") # Optional logging
 
-        # --- Let's proceed assuming Option A or B where we intercept move_vals ---
-        # --- Replace this placeholder logic with actual call if needed ---
-        # --- You MUST adapt this part based on purchase_deposit's code ---
+        # Proceed only if analytic distribution is actually set on the first line
+        if not analytic_distribution:
+            _logger.warning(f"Purchase Order {self.name}: No analytic distribution found on the first order line ({first_line.name}).")
+            return lines_vals_list # Return original lines if no analytic info found
 
-        # Example: Assuming 'super()' call gives us the move values or we prepare them
-        # We need to get the dictionary 'move_vals' before the move is created.
-        # The line below is a placeholder - you need to figure out how the
-        # original method provides the move values dictionary.
-        # Perhaps it calls a specific preparation method?
+        # Find the deposit account used (use the same logic as the original method)
+        deposit_account_id = self._get_deposit_account()
+        if not deposit_account_id:
+            # This case should ideally be handled by the original method validation,
+            # but double-checking doesn't hurt.
+             _logger.error(f"Purchase Order {self.name}: Could not determine deposit account.")
+             return lines_vals_list # Should not happen if original method works
 
-        # ---- START MODIFICATION LOGIC ----
+        # Iterate through the prepared line dictionaries
+        line_modified = False
+        for line_vals_tuple in lines_vals_list:
+            # line_vals_tuple is typically (0, 0, {line_dictionary})
+            if len(line_vals_tuple) == 3 and isinstance(line_vals_tuple[2], dict):
+                line_dictionary = line_vals_tuple[2]
 
-        # Let's assume we have access to `move_vals` somehow
-        # If the original method does more than just return vals, call super first.
-        # res = super(PurchaseOrder, self).create_invoices()
-        # Now, try to extract move_vals from 'res' if it's an action dictionary
-        # or find the created move if 'res' is a move object (less likely to work pre-validation)
+                # Identify the deposit line:
+                # It's the one posting to the deposit_account_id and
+                # usually has a specific name like "Deposit Payment"
+                # and will have a debit value (for standard deposits)
+                if (line_dictionary.get('account_id') == deposit_account_id and
+                        line_dictionary.get('debit', 0) > 0): # Check for debit > 0
 
-        # --- Simplified approach: Assume we override a PREPARATION method ---
-        # --- Let's pretend we override `_prepare_deposit_move_vals` ---
-        # --- You'd need to rename this method override accordingly! ---
+                    # Add the analytic distribution to this line's dictionary
+                    line_dictionary['analytic_distribution'] = analytic_distribution
+                    line_modified = True
+                    _logger.info(f"Purchase Order {self.name}: Applied analytic distribution {analytic_distribution} to deposit line.") # Optional logging
+                    # Assuming only one main deposit line needs it, we can stop searching
+                    break
 
-        # Replace this with the actual preparation method name if you find one
-        def _prepare_deposit_move_vals_placeholder(self):
-            # Get the original values first
-            move_vals = super(PurchaseOrder, self)._prepare_deposit_move_vals_placeholder() # Call original prep method
+        if not line_modified:
+             _logger.warning(f"Purchase Order {self.name}: Could not find the specific deposit line (Account ID: {deposit_account_id}, Debit>0) in prepared move lines to apply analytics.")
 
-            purchase_order = self # Assuming this method is on purchase.order
-
-            if not purchase_order.order_line:
-                # No lines to get analytic from, proceed as normal
-                return move_vals
-
-            # Get analytic distribution from the first PO line (simplification)
-            first_line = purchase_order.order_line[0]
-            analytic_distribution = first_line.analytic_distribution
-
-            if analytic_distribution and move_vals.get('line_ids'):
-                # Now, find the specific line(s) in the move dictionary to apply it to.
-                # This requires knowing which account the deposit uses.
-                # Let's assume it's the line labeled 'Deposit Payment' as per your error
-                # We need to loop through the line commands (usually tuples)
-                for command in move_vals['line_ids']:
-                    # command is often (0, 0, {line_dictionary}) for new lines
-                    if len(command) == 3 and command[0] == 0:
-                        line_dictionary = command[2]
-                        # Identify the target line. Check account? Check label?
-                        # Checking label is fragile, checking account is better.
-                        # You need to find the Account ID for your deposit/prepayment account.
-                        # Let's ASSUME the problematic line has the label 'Deposit Payment'
-                        if line_dictionary.get('name') == 'Deposit Payment': # Fragile Check!
-                            line_dictionary['analytic_distribution'] = analytic_distribution
-                            # If you found the line, maybe stop? Or apply to others?
-                            # Usually, it's one specific line (e.g., the prepayment debit)
-                            break # Exit loop after finding and modifying
-
-                        # --- Add a more robust check here if you know the deposit account ID ---
-                        # deposit_account_id = 12345 # Replace with your actual deposit account ID
-                        # if line_dictionary.get('account_id') == deposit_account_id:
-                        #     line_dictionary['analytic_distribution'] = analytic_distribution
-                        #     break
-                        # ---
-
-            return move_vals # Return the modified dictionary
-
-        # --- END MODIFICATION LOGIC ---
-
-        # If you overrode the main action method, you might return 'res' here
-        # return res
+        # Return the potentially modified list of line dictionaries
+        return lines_vals_list
